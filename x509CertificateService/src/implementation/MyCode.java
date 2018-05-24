@@ -1,5 +1,6 @@
 package implementation;
 
+import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
@@ -16,6 +17,12 @@ import java.util.Enumeration;
 
 import javax.security.cert.X509Certificate;
 
+import org.bouncycastle.asn1.ASN1InputStream;
+import org.bouncycastle.asn1.ASN1Primitive;
+import org.bouncycastle.asn1.DEROctetString;
+import org.bouncycastle.asn1.DERSet;
+import org.bouncycastle.asn1.x509.KeyUsage;
+import org.bouncycastle.asn1.x509.X509Extensions;
 import org.bouncycastle.asn1.x509.X509Name;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.bouncycastle.x509.X509V3CertificateGenerator;
@@ -162,7 +169,14 @@ public class MyCode extends CodeV3 {
 			super.access.setSubjectSignatureAlgorithm(certificate.getPublicKey().getAlgorithm());
 			RSAPublicKey rsaPk = (RSAPublicKey) certificate.getPublicKey();
 			int pKLen=rsaPk.getModulus().bitLength();
-			super.access.setPublicKeyParameter(""+pKLen);		
+			super.access.setPublicKeyParameter(""+pKLen);	
+			
+			boolean[] keyUsageVal=certificate.getKeyUsage();
+			if(keyUsageVal!=null) {
+				super.access.setKeyUsage(keyUsageVal);
+				super.access.setCritical(Constants.KU, true);
+			}
+			
 			return 1;
 		} catch (KeyStoreException e) {
 			e.printStackTrace();
@@ -266,6 +280,46 @@ public class MyCode extends CodeV3 {
 			gen.setNotAfter(super.access.getNotAfter());
 			gen.setSignatureAlgorithm(algorithm);
 			gen.setPublicKey(keyPair.getPublic());
+			
+			boolean[] keyUsageValues=super.access.getKeyUsage();
+			int keyusageValue=0;
+			for(int i=0; i<keyUsageValues.length; i++) {
+				if(keyUsageValues[i]) {
+					switch(i) {
+						case 0:
+							keyusageValue=keyusageValue|KeyUsage.digitalSignature;
+							break;
+						case 1:
+							keyusageValue=keyusageValue|KeyUsage.nonRepudiation;
+							break;
+						case 2:
+							keyusageValue=keyusageValue|KeyUsage.keyEncipherment;
+							break;
+						case 3:
+							keyusageValue=keyusageValue|KeyUsage.dataEncipherment;
+							break;
+						case 4:
+							keyusageValue=keyusageValue|KeyUsage.keyAgreement;
+							break;
+						case 5:
+							keyusageValue=keyusageValue|KeyUsage.keyCertSign;
+							break;
+						case 6:
+							keyusageValue=keyusageValue|KeyUsage.cRLSign;
+							break;
+						case 7:
+							keyusageValue=keyusageValue|KeyUsage.encipherOnly;
+							break;
+						case 8:
+							keyusageValue=keyusageValue|KeyUsage.decipherOnly;
+							break;
+					}
+				}
+			}
+			if(keyusageValue!=0) {
+				KeyUsage keyUsage=new KeyUsage(keyusageValue);
+				gen.addExtension(X509Extensions.KeyUsage, true, keyUsage);
+			}
 			java.security.cert.X509Certificate certificate=gen.generate(keyPair.getPrivate(), "BC");			
 			localKeyStore.setCertificateEntry(keypair_name, certificate);			
 			saveLocalKeystore();
