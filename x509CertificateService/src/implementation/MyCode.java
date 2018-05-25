@@ -13,19 +13,32 @@ import java.security.KeyStoreException;
 import java.security.Principal;
 import java.security.Security;
 import java.security.interfaces.RSAPublicKey;
+import java.text.ParseException;
+import java.text.SimpleDateFormat;
+import java.util.Date;
 import java.util.Enumeration;
+import java.util.Set;
+import java.util.Vector;
 
 import javax.security.cert.X509Certificate;
 
+import org.bouncycastle.asn1.ASN1Encodable;
 import org.bouncycastle.asn1.ASN1InputStream;
 import org.bouncycastle.asn1.ASN1Primitive;
+import org.bouncycastle.asn1.ASN1UTCTime;
 import org.bouncycastle.asn1.DEROctetString;
 import org.bouncycastle.asn1.DERSet;
+import org.bouncycastle.asn1.x500.style.BCStyle;
+import org.bouncycastle.asn1.x509.Attribute;
+import org.bouncycastle.asn1.x509.Extension;
 import org.bouncycastle.asn1.x509.KeyUsage;
+import org.bouncycastle.asn1.x509.SubjectDirectoryAttributes;
+import org.bouncycastle.asn1.x509.Time;
 import org.bouncycastle.asn1.x509.X509Extensions;
 import org.bouncycastle.asn1.x509.X509Name;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.bouncycastle.x509.X509V3CertificateGenerator;
+import org.bouncycastle.x509.extension.X509ExtensionUtil;
 
 import code.GuiException;
 import gui.Constants;
@@ -177,6 +190,38 @@ public class MyCode extends CodeV3 {
 				super.access.setCritical(Constants.KU, true);
 			}
 			
+			Set<String> criticalExtensions=certificate.getCriticalExtensionOIDs();
+			
+			byte[] subjectDirectoryBytes=certificate.getExtensionValue(Extension.subjectDirectoryAttributes.toString());
+			try {
+				if(subjectDirectoryBytes!=null) {
+		            SubjectDirectoryAttributes subjectDirectoryAttributes = SubjectDirectoryAttributes.getInstance(X509ExtensionUtil.fromExtensionValue(subjectDirectoryBytes));
+		            Vector<Attribute> attributes = subjectDirectoryAttributes.getAttributes();
+		            for (Attribute attribute : attributes) {
+		                if (attribute.getAttrType().equals(BCStyle.DATE_OF_BIRTH)) {
+		                    ASN1UTCTime dateOfBirthTime = (ASN1UTCTime) attribute.getAttrValues().getObjectAt(0);
+		                    SimpleDateFormat simpleDateFormat = new SimpleDateFormat("yyyyMMdd");
+		                    access.setDateOfBirth(simpleDateFormat.format(dateOfBirthTime.getDate()));
+		                } else if (attribute.getAttrType().equals(BCStyle.PLACE_OF_BIRTH)) {
+		                    DEROctetString derOctetString = (DEROctetString) attribute.getAttrValues().getObjectAt(0);
+		                    super.access.setSubjectDirectoryAttribute(Constants.POB, new String(derOctetString.getOctets()));
+		                } else if (attribute.getAttrType().equals(BCStyle.COUNTRY_OF_CITIZENSHIP)) {
+		                    DEROctetString derOctetString = (DEROctetString) attribute.getAttrValues().getObjectAt(0);
+		                    super.access.setSubjectDirectoryAttribute(Constants.COC, new String(derOctetString.getOctets()));
+		                } else if (attribute.getAttrType().equals(BCStyle.GENDER)) {
+		                    DEROctetString derOctetString = (DEROctetString) attribute.getAttrValues().getObjectAt(0);
+		                    super.access.setGender(new String(derOctetString.getOctets()));
+		                }
+		            }
+		            if(criticalExtensions.contains(Extension.subjectDirectoryAttributes.toString())) {
+		            	super.access.setCritical(Constants.SDA, true);
+		            }
+		        }
+			}
+			catch(Exception ex) {
+				ex.printStackTrace();
+			}
+			
 			return 1;
 		} catch (KeyStoreException e) {
 			e.printStackTrace();
@@ -320,6 +365,37 @@ public class MyCode extends CodeV3 {
 				KeyUsage keyUsage=new KeyUsage(keyusageValue);
 				gen.addExtension(X509Extensions.KeyUsage, true, keyUsage);
 			}
+			
+			Vector<Attribute> attributesTemp = new Vector<Attribute>();
+			boolean flagsubDirAtrUsage=false;
+			boolean isCriticalsubDirAtrUsage=super.access.isCritical(Constants.SDA);
+			String gender=super.access.getGender();
+			if(!gender.isEmpty()) {
+				attributesTemp.add(new Attribute(BCStyle.GENDER, new DERSet(new DEROctetString(gender.getBytes()))));
+				flagsubDirAtrUsage=true;
+			}
+			String countryAndCitizenship=super.access.getSubjectDirectoryAttribute(Constants.COC);
+			if(!countryAndCitizenship.isEmpty()) {
+				attributesTemp.add(new Attribute(BCStyle.COUNTRY_OF_CITIZENSHIP, new DERSet(new DEROctetString(countryAndCitizenship.getBytes()))));
+				flagsubDirAtrUsage=true;
+			}
+			String dateOfBirth=super.access.getDateOfBirth();
+			if(!dateOfBirth.isEmpty()) {
+				SimpleDateFormat simpleDateFormat = new SimpleDateFormat("yyyyMMdd");
+				Date dateOfBirthDate = simpleDateFormat.parse(dateOfBirth);
+				attributesTemp.add(new Attribute(BCStyle.DATE_OF_BIRTH, new DERSet(new Time(dateOfBirthDate))));
+				flagsubDirAtrUsage=true;
+			}
+			String placeOfBirth=super.access.getSubjectDirectoryAttribute(Constants.POB);
+			if(!placeOfBirth.isEmpty()) {
+				attributesTemp.add(new Attribute(BCStyle.PLACE_OF_BIRTH, new DERSet(new DEROctetString(placeOfBirth.getBytes()))));
+				flagsubDirAtrUsage=true;
+			}
+			if(flagsubDirAtrUsage) {
+				SubjectDirectoryAttributes attributes=new SubjectDirectoryAttributes(attributesTemp);			
+				gen.addExtension(X509Extensions.SubjectDirectoryAttributes, isCriticalsubDirAtrUsage, attributes);
+			}
+			
 			java.security.cert.X509Certificate certificate=gen.generate(keyPair.getPrivate(), "BC");			
 			localKeyStore.setCertificateEntry(keypair_name, certificate);			
 			saveLocalKeystore();
