@@ -1,11 +1,11 @@
 package implementation;
 
-import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.math.BigInteger;
+import java.security.Key;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
 import java.security.KeyStore;
@@ -13,18 +13,13 @@ import java.security.KeyStoreException;
 import java.security.Principal;
 import java.security.Security;
 import java.security.interfaces.RSAPublicKey;
-import java.text.ParseException;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Enumeration;
 import java.util.Set;
 import java.util.Vector;
 
-import javax.security.cert.X509Certificate;
-
-import org.bouncycastle.asn1.ASN1Encodable;
-import org.bouncycastle.asn1.ASN1InputStream;
-import org.bouncycastle.asn1.ASN1Primitive;
+import org.bouncycastle.asn1.ASN1Integer;
 import org.bouncycastle.asn1.ASN1UTCTime;
 import org.bouncycastle.asn1.DEROctetString;
 import org.bouncycastle.asn1.DERSet;
@@ -55,6 +50,30 @@ public class MyCode extends CodeV3 {
 		super(algorithm_conf, extensions_conf, extensions_rules);
 		Security.addProvider(new BouncyCastleProvider());
 	}
+	
+	protected boolean saveKeyPairToLocalStorage(String alias, Key key, java.security.cert.Certificate certificate) {
+		java.security.cert.Certificate []certificates= new java.security.cert.X509Certificate[1];
+		certificates[0]=certificate;
+		try {
+			localKeyStore.setKeyEntry(alias, key, null, certificates);
+			saveLocalKeystore();
+			return true;
+		} catch (KeyStoreException e) {
+			e.printStackTrace();
+		}
+		return false;
+	}
+	
+	protected boolean saveCertificateToLocalStorage(String alias, java.security.cert.X509Certificate certificate) {
+		try {
+			localKeyStore.setCertificateEntry(alias, certificate);
+			saveLocalKeystore();
+			return true;
+		} catch (KeyStoreException e) {
+			e.printStackTrace();
+		}
+		return false;
+	}
 
 	@Override
 	public boolean canSign(String arg0) {
@@ -75,8 +94,37 @@ public class MyCode extends CodeV3 {
 	}
 
 	@Override
-	public boolean exportKeypair(String arg0, String arg1, String arg2) {
-		// TODO Auto-generated method stub
+	public boolean exportKeypair(String keypair_name, String fileName, String password) {
+		FileOutputStream oStream=null;
+		try {
+			if(localKeyStore.containsAlias(keypair_name)) {
+				java.security.cert.X509Certificate certificate=(java.security.cert.X509Certificate) localKeyStore.getCertificate(keypair_name);
+				File file=new File(fileName);
+				if (!file.exists()) {
+					file.createNewFile();
+				}		
+				java.security.cert.Certificate[] certificates= new java.security.cert.X509Certificate[1];
+				certificates[0]=certificate;			
+				KeyStore tempKeyStore=KeyStore.getInstance("PKCS12");
+				tempKeyStore.load(null, password.toCharArray());
+				tempKeyStore.setKeyEntry(keypair_name, localKeyStore.getKey(keypair_name, null), null, certificates);		
+				oStream=new FileOutputStream(file);
+				tempKeyStore.store(oStream, password.toCharArray());
+				oStream.flush();
+				return true;
+			}
+		} catch (Exception e) {
+			e.printStackTrace();
+		}
+		finally {
+			if(oStream!=null) {
+				try {
+					oStream.close();
+				} catch (IOException e) {
+					e.printStackTrace();
+				}
+			}
+		}
 		return false;
 	}
 
@@ -117,8 +165,34 @@ public class MyCode extends CodeV3 {
 	}
 
 	@Override
-	public boolean importKeypair(String arg0, String arg1, String arg2) {
-		// TODO Auto-generated method stub
+	public boolean importKeypair(String keypair_name, String filePath, String password) {
+		File file= new File(filePath);
+		FileInputStream inStream=null;
+		if(file.exists()) {
+			try {
+				KeyStore tempKeyStore=KeyStore.getInstance("PKCS12");
+				inStream= new FileInputStream(file);
+				tempKeyStore.load(inStream, password.toCharArray());
+				Enumeration<String> keyStoreAliases=tempKeyStore.aliases();
+				while(keyStoreAliases.hasMoreElements()) {
+					String tempAlias=keyStoreAliases.nextElement();
+					java.security.cert.Certificate certificate=tempKeyStore.getCertificate(tempAlias);
+					saveKeyPairToLocalStorage(tempAlias, tempKeyStore.getKey(tempAlias, null), certificate);
+				}
+				return true;
+			} catch (Exception e) {
+				e.printStackTrace();
+			}
+			finally {
+				if(inStream!=null) {
+					try {
+						inStream.close();
+					} catch (IOException e) {
+						e.printStackTrace();
+					}
+				}
+			}
+		}
 		return false;
 	}
 
@@ -222,6 +296,23 @@ public class MyCode extends CodeV3 {
 				ex.printStackTrace();
 			}
 			
+			byte[] inhabitAnyPolicyBytes = certificate.getExtensionValue(Extension.inhibitAnyPolicy.toString());
+			try {
+		        if (inhabitAnyPolicyBytes != null) {
+		            ASN1Integer skipCertsInteger;
+					skipCertsInteger = (ASN1Integer) X509ExtensionUtil.fromExtensionValue(inhabitAnyPolicyBytes);
+		            super.access.setSkipCerts(skipCertsInteger.getValue().toString());
+		            super.access.setInhibitAnyPolicy(true);
+		            if(criticalExtensions.contains(Extension.inhibitAnyPolicy.toString())) {
+		            	super.access.setCritical(Constants.IAP, true);
+		            }
+		        }
+			}
+			catch (IOException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+			}
+			
 			return 1;
 		} catch (KeyStoreException e) {
 			e.printStackTrace();
@@ -284,8 +375,16 @@ public class MyCode extends CodeV3 {
 	}
 
 	@Override
-	public boolean removeKeypair(String arg0) {
-		// TODO Auto-generated method stub
+	public boolean removeKeypair(String keypair_name) {
+		try {
+			if(localKeyStore.containsAlias(keypair_name)) {
+				localKeyStore.deleteEntry(keypair_name);
+				saveLocalKeystore();
+				return true;
+			}
+		} catch (KeyStoreException e) {
+			e.printStackTrace();
+		}
 		return false;
 	}
 
@@ -396,9 +495,18 @@ public class MyCode extends CodeV3 {
 				gen.addExtension(X509Extensions.SubjectDirectoryAttributes, isCriticalsubDirAtrUsage, attributes);
 			}
 			
-			java.security.cert.X509Certificate certificate=gen.generate(keyPair.getPrivate(), "BC");			
-			localKeyStore.setCertificateEntry(keypair_name, certificate);			
-			saveLocalKeystore();
+			boolean inhibitAnyPolicyFlag=super.access.getInhibitAnyPolicy();
+			boolean isCriticalInhibitAnyPolicyFlag=super.access.isCritical(Constants.IAP);
+			if(inhibitAnyPolicyFlag) {
+				String skipCerts=super.access.getSkipCerts();
+				if(!skipCerts.isEmpty()) {
+					ASN1Integer skipCertsInteger = new ASN1Integer(new BigInteger(skipCerts));
+					gen.addExtension(Extension.inhibitAnyPolicy, isCriticalInhibitAnyPolicyFlag, skipCertsInteger);
+				}
+			}
+			
+			java.security.cert.X509Certificate certificate=gen.generate(keyPair.getPrivate(), "BC");
+			saveKeyPairToLocalStorage(keypair_name, keyPair.getPrivate(), certificate);
 			loadLocalKeystore();
 			return true;
 		} catch (Exception e) {
