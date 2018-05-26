@@ -1,10 +1,12 @@
 package implementation;
 
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.PrintStream;
 import java.math.BigInteger;
 import java.security.Key;
 import java.security.KeyPair;
@@ -12,6 +14,7 @@ import java.security.KeyPairGenerator;
 import java.security.KeyStore;
 import java.security.KeyStoreException;
 import java.security.Principal;
+import java.security.PrivateKey;
 import java.security.PublicKey;
 import java.security.Security;
 import java.security.cert.CertificateException;
@@ -26,6 +29,8 @@ import java.util.Iterator;
 import java.util.Set;
 import java.util.Vector;
 
+import javax.security.auth.x500.X500Principal;
+
 import org.bouncycastle.asn1.ASN1Integer;
 import org.bouncycastle.asn1.ASN1UTCTime;
 import org.bouncycastle.asn1.DEROctetString;
@@ -35,10 +40,16 @@ import org.bouncycastle.asn1.x509.Attribute;
 import org.bouncycastle.asn1.x509.Extension;
 import org.bouncycastle.asn1.x509.KeyUsage;
 import org.bouncycastle.asn1.x509.SubjectDirectoryAttributes;
+import org.bouncycastle.asn1.x509.SubjectPublicKeyInfo;
 import org.bouncycastle.asn1.x509.Time;
 import org.bouncycastle.asn1.x509.X509Extensions;
 import org.bouncycastle.asn1.x509.X509Name;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
+import org.bouncycastle.operator.ContentSigner;
+import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
+import org.bouncycastle.pkcs.PKCS10CertificationRequest;
+import org.bouncycastle.pkcs.PKCS10CertificationRequestBuilder;
+import org.bouncycastle.pkcs.jcajce.JcaPKCS10CertificationRequestBuilder;
 import org.bouncycastle.x509.X509V3CertificateGenerator;
 import org.bouncycastle.x509.extension.X509ExtensionUtil;
 
@@ -104,8 +115,39 @@ public class MyCode extends CodeV3 {
 	}
 
 	@Override
-	public boolean exportCSR(String arg0, String arg1, String arg2) {
-		// TODO Auto-generated method stub
+	public boolean exportCSR(String filePath, String keypair_name, String algorithm) {
+		FileOutputStream oStream=null;	
+		try {
+			java.security.cert.X509Certificate certificate=(X509Certificate) localKeyStore.getCertificate(keypair_name);	
+			if(certificate!=null) {
+				File file=new File(filePath);
+				if (!file.exists()) {
+					file.createNewFile();
+				}
+				oStream=new FileOutputStream(file);
+				X500Principal subject=certificate.getSubjectX500Principal();
+				PublicKey publicKey=certificate.getPublicKey();
+				PKCS10CertificationRequestBuilder builder = new JcaPKCS10CertificationRequestBuilder(subject, publicKey);		
+				ContentSigner signGen = new JcaContentSignerBuilder(algorithm).build((PrivateKey)localKeyStore.getKey(keypair_name, null));		
+				PKCS10CertificationRequest csr = builder.build(signGen);
+				
+				oStream.write(csr.getEncoded());
+				oStream.flush();
+				return true;
+			}
+		}
+		catch(Exception e) {
+			e.printStackTrace();
+		}
+		finally {
+			if(oStream!=null) {
+				try {
+					oStream.close();
+				} catch (IOException e) {
+					e.printStackTrace();
+				}
+			}
+		}
 		return false;
 	}
 
