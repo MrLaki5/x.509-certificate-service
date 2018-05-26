@@ -11,6 +11,7 @@ import java.security.KeyPairGenerator;
 import java.security.KeyStore;
 import java.security.KeyStoreException;
 import java.security.Principal;
+import java.security.PublicKey;
 import java.security.Security;
 import java.security.interfaces.RSAPublicKey;
 import java.text.SimpleDateFormat;
@@ -76,8 +77,19 @@ public class MyCode extends CodeV3 {
 	}
 
 	@Override
-	public boolean canSign(String arg0) {
-		// TODO Auto-generated method stub
+	public boolean canSign(String keypair_name) {
+		try {
+			java.security.cert.X509Certificate certificate= (java.security.cert.X509Certificate) localKeyStore.getCertificate(keypair_name);
+			if(certificate!=null) {
+				if(certificate.getBasicConstraints()!=-1) {
+					if(certificate.getKeyUsage()[5]==true) {
+						return true;
+					}
+				}
+			}
+		} catch (KeyStoreException e) {
+			e.printStackTrace();
+		}
 		return false;
 	}
 
@@ -129,21 +141,54 @@ public class MyCode extends CodeV3 {
 	}
 
 	@Override
-	public String getCertPublicKeyAlgorithm(String arg0) {
-		// TODO Auto-generated method stub
-		return null;
+	public String getCertPublicKeyAlgorithm(String keypair_name) {
+		java.security.cert.X509Certificate certificate;
+		try {
+			certificate = (java.security.cert.X509Certificate) localKeyStore.getCertificate(keypair_name);			
+			return certificate.getPublicKey().getAlgorithm();
+		} catch (KeyStoreException e) {
+			e.printStackTrace();
+		}
+		return "";
 	}
 
 	@Override
-	public String getCertPublicKeyParameter(String arg0) {
-		// TODO Auto-generated method stub
-		return null;
+	public String getCertPublicKeyParameter(String keypair_name) {
+		java.security.cert.X509Certificate certificate;
+		try {
+			certificate = (java.security.cert.X509Certificate) localKeyStore.getCertificate(keypair_name);	
+			RSAPublicKey rsaPk = (RSAPublicKey) certificate.getPublicKey();
+			int pKLen=rsaPk.getModulus().bitLength();
+			return ""+pKLen;
+		} catch (KeyStoreException e) {
+			e.printStackTrace();
+		}
+		return "";
 	}
 
 	@Override
-	public String getSubjectInfo(String arg0) {
-		// TODO Auto-generated method stub
-		return null;
+	public String getSubjectInfo(String keypair_name) {
+		java.security.cert.X509Certificate certificate;
+		try {
+			certificate = (java.security.cert.X509Certificate) localKeyStore.getCertificate(keypair_name);
+			Principal principal=certificate.getSubjectDN();
+			String[] params=principal.getName().split(", ");
+			String subStr="";
+			for(int i=0; i<params.length; i++) {
+				String []tempStr=params[i].split("=");
+				if(tempStr.length<=1) {
+					continue;
+				}
+				subStr+=params[i];
+				if((i+1)<params.length) {
+					subStr+=",";
+				}
+			}
+			return subStr;
+		} catch (KeyStoreException e) {
+			e.printStackTrace();
+		}
+		return "";
 	}
 
 	@Override
@@ -204,6 +249,16 @@ public class MyCode extends CodeV3 {
 			}
 			super.access.setVersion(Constants.V3);
 			java.security.cert.X509Certificate certificate=(java.security.cert.X509Certificate) localKeyStore.getCertificate(keypair_name);
+			
+			int retInt=1;
+			try {
+				PublicKey pubKey=certificate.getPublicKey();
+				certificate.verify(pubKey);
+			}
+			catch(Exception ex) {
+				retInt=0;
+			}
+			
 			Principal principal=certificate.getSubjectDN();
 			String[] params=principal.getName().split(", ");
 			for(int i=0; i<params.length; i++) {
@@ -313,7 +368,7 @@ public class MyCode extends CodeV3 {
 				e.printStackTrace();
 			}
 			
-			return 1;
+			return retInt;
 		} catch (KeyStoreException e) {
 			e.printStackTrace();
 		}
