@@ -2,6 +2,7 @@ package implementation;
 
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.math.BigInteger;
@@ -13,12 +14,15 @@ import java.security.KeyStoreException;
 import java.security.Principal;
 import java.security.PublicKey;
 import java.security.Security;
+import java.security.cert.CertificateException;
 import java.security.cert.X509Certificate;
 import java.security.interfaces.RSAPublicKey;
 import java.text.SimpleDateFormat;
 import java.util.Base64;
+import java.util.Collection;
 import java.util.Date;
 import java.util.Enumeration;
+import java.util.Iterator;
 import java.util.Set;
 import java.util.Vector;
 
@@ -55,11 +59,13 @@ public class MyCode extends CodeV3 {
 	}
 	
 	protected boolean saveKeyPairToLocalStorage(String alias, Key key, java.security.cert.Certificate certificate) {
+		alias=alias.toLowerCase();
 		java.security.cert.Certificate []certificates= new java.security.cert.X509Certificate[1];
 		certificates[0]=certificate;
 		try {
 			localKeyStore.setKeyEntry(alias, key, null, certificates);
 			saveLocalKeystore();
+			loadLocalKeystore();
 			return true;
 		} catch (KeyStoreException e) {
 			e.printStackTrace();
@@ -67,10 +73,12 @@ public class MyCode extends CodeV3 {
 		return false;
 	}
 	
-	protected boolean saveCertificateToLocalStorage(String alias, java.security.cert.X509Certificate certificate) {
+	protected boolean saveCertificateToLocalStorage(String alias, java.security.cert.Certificate certificate) {
+		alias=alias.toLowerCase();
 		try {
 			localKeyStore.setCertificateEntry(alias, certificate);
 			saveLocalKeystore();
+			loadLocalKeystore();
 			return true;
 		} catch (KeyStoreException e) {
 			e.printStackTrace();
@@ -254,8 +262,36 @@ public class MyCode extends CodeV3 {
 	}
 
 	@Override
-	public boolean importCertificate(String arg0, String arg1) {
-		// TODO Auto-generated method stub
+	public boolean importCertificate(String filePath, String keypair_name) {
+		FileInputStream fStream=null;
+		try {
+			File file=new File(filePath);
+			if(!file.exists()) {
+				return false;
+			}
+			fStream=new FileInputStream(filePath);
+			/*Collection  coll = java.security.cert.CertificateFactory.getInstance("X509").generateCertificates(fStream);
+			Iterator iterator = coll.iterator();
+			while(iterator.hasNext()) {
+				java.security.cert.Certificate tempCert = (java.security.cert.Certificate) coll.iterator().next();
+				saveCertificateToLocalStorage(keypair_name, tempCert);
+				break;
+			}*/
+			java.security.cert.Certificate tempCert =java.security.cert.CertificateFactory.getInstance("X509").generateCertificate(fStream);
+			saveCertificateToLocalStorage(keypair_name, tempCert);
+			return true;
+		} catch (Exception e) {
+			e.printStackTrace();
+		}
+		finally {
+			if(fStream!=null) {
+				try {
+					fStream.close();
+				} catch (IOException e) {
+					e.printStackTrace();
+				}
+			}
+		}
 		return false;
 	}
 
@@ -339,21 +375,24 @@ public class MyCode extends CodeV3 {
 					}
 				}
 			}
-			principal=certificate.getIssuerDN();
-			params=principal.getName().split(", ");
-			String issStr="";
-			for(int i=0; i<params.length; i++) {
-				String []tempStr=params[i].split("=");
-				if(tempStr.length<=1) {
-					continue;
+			
+			if(retInt==2) {
+				principal=certificate.getIssuerDN();
+				params=principal.getName().split(", ");
+				String issStr="";
+				for(int i=0; i<params.length; i++) {
+					String []tempStr=params[i].split("=");
+					if(tempStr.length<=1) {
+						continue;
+					}
+					issStr+=params[i];
+					if((i+1)<params.length) {
+						issStr+=",";
+					}
 				}
-				issStr+=params[i];
-				if((i+1)<params.length) {
-					issStr+=",";
-				}
+				super.access.setIssuer(issStr);
+				super.access.setIssuerSignatureAlgorithm(certificate.getSigAlgName());
 			}
-			super.access.setIssuer(issStr);
-			super.access.setIssuerSignatureAlgorithm(certificate.getSigAlgName());
 			
 			super.access.setSerialNumber(certificate.getSerialNumber().toString());
 			
@@ -615,7 +654,6 @@ public class MyCode extends CodeV3 {
 			
 			java.security.cert.X509Certificate certificate=gen.generate(keyPair.getPrivate(), "BC");
 			saveKeyPairToLocalStorage(keypair_name, keyPair.getPrivate(), certificate);
-			loadLocalKeystore();
 			return true;
 		} catch (Exception e) {
 			e.printStackTrace();
