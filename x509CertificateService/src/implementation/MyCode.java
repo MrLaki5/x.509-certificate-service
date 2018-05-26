@@ -1,12 +1,10 @@
 package implementation;
 
-import java.io.ByteArrayOutputStream;
+import java.io.DataInputStream;
 import java.io.File;
 import java.io.FileInputStream;
-import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
-import java.io.PrintStream;
 import java.math.BigInteger;
 import java.security.Key;
 import java.security.KeyPair;
@@ -17,15 +15,12 @@ import java.security.Principal;
 import java.security.PrivateKey;
 import java.security.PublicKey;
 import java.security.Security;
-import java.security.cert.CertificateException;
 import java.security.cert.X509Certificate;
 import java.security.interfaces.RSAPublicKey;
 import java.text.SimpleDateFormat;
 import java.util.Base64;
-import java.util.Collection;
 import java.util.Date;
 import java.util.Enumeration;
-import java.util.Iterator;
 import java.util.Set;
 import java.util.Vector;
 
@@ -40,7 +35,6 @@ import org.bouncycastle.asn1.x509.Attribute;
 import org.bouncycastle.asn1.x509.Extension;
 import org.bouncycastle.asn1.x509.KeyUsage;
 import org.bouncycastle.asn1.x509.SubjectDirectoryAttributes;
-import org.bouncycastle.asn1.x509.SubjectPublicKeyInfo;
 import org.bouncycastle.asn1.x509.Time;
 import org.bouncycastle.asn1.x509.X509Extensions;
 import org.bouncycastle.asn1.x509.X509Name;
@@ -130,7 +124,6 @@ public class MyCode extends CodeV3 {
 				PKCS10CertificationRequestBuilder builder = new JcaPKCS10CertificationRequestBuilder(subject, publicKey);		
 				ContentSigner signGen = new JcaContentSignerBuilder(algorithm).build((PrivateKey)localKeyStore.getKey(keypair_name, null));		
 				PKCS10CertificationRequest csr = builder.build(signGen);
-				
 				oStream.write(csr.getEncoded());
 				oStream.flush();
 				return true;
@@ -298,8 +291,33 @@ public class MyCode extends CodeV3 {
 	}
 
 	@Override
-	public String importCSR(String arg0) {
-		// TODO Auto-generated method stub
+	public String importCSR(String filePath) {
+		try {
+			File file=new File(filePath);
+			if(!file.exists()) {
+				return null;
+			}
+			java.nio.file.Path path = java.nio.file.Paths.get(filePath);
+			byte[] data = java.nio.file.Files.readAllBytes(path);
+			PKCS10CertificationRequest csrr=new PKCS10CertificationRequest(data);
+			String tempVr=csrr.getSubject().toString();
+			String[] params=tempVr.split(",");
+			String subStr="";
+			for(int i=0; i<params.length; i++) {
+				params[i]=params[i].trim();
+				String []tempStr=params[i].split("=");
+				if(tempStr.length<=1) {
+					continue;
+				}
+				subStr+=params[i];
+				if((i+1)<params.length) {
+					subStr+=",";
+				}
+			}
+			return subStr;
+		} catch (Exception e) {
+			e.printStackTrace();
+		}
 		return null;
 	}
 
