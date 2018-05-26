@@ -13,8 +13,10 @@ import java.security.KeyStoreException;
 import java.security.Principal;
 import java.security.PublicKey;
 import java.security.Security;
+import java.security.cert.X509Certificate;
 import java.security.interfaces.RSAPublicKey;
 import java.text.SimpleDateFormat;
+import java.util.Base64;
 import java.util.Date;
 import java.util.Enumeration;
 import java.util.Set;
@@ -100,8 +102,56 @@ public class MyCode extends CodeV3 {
 	}
 
 	@Override
-	public boolean exportCertificate(String arg0, String arg1, int arg2, int arg3) {
-		// TODO Auto-generated method stub
+	public boolean exportCertificate(String fileName, String keypair_name, int encoding, int format) {
+		FileOutputStream oStream=null;
+		try {
+			if(localKeyStore.containsAlias(keypair_name)) {
+				java.security.cert.Certificate certificate=(java.security.cert.Certificate) localKeyStore.getCertificate(keypair_name);
+				File file=new File(fileName);
+				if (!file.exists()) {
+					file.createNewFile();
+				}
+				oStream=new FileOutputStream(file);
+				
+				if(encoding==1) {
+					if(format==0) {
+						byte[] bCert=certificate.getEncoded();
+						String encoded="-----BEGIN CERTIFICATE-----\n" + Base64.getEncoder().encodeToString(bCert)+ "-----END CERTIFICATE-----";
+						oStream.write(encoded.getBytes());
+					}
+					else {
+						java.security.cert.Certificate[] certificates= localKeyStore.getCertificateChain(keypair_name);
+						if(certificates==null) {
+							certificates=new java.security.cert.X509Certificate[1];
+							certificates[0]=certificate;
+						}
+						for(int i=0; i<certificates.length; i++) {
+							java.security.cert.Certificate tempCert=certificates[i];
+							byte[] bCert=tempCert.getEncoded();
+							String encoded="-----BEGIN CERTIFICATE-----\n" + Base64.getEncoder().encodeToString(bCert)+ "\n-----END CERTIFICATE-----";
+							oStream.write(encoded.getBytes());
+						}
+					}
+				}
+				else {
+					oStream.write(certificate.getEncoded());
+				}
+				
+				oStream.flush();
+				return true;
+			}
+		} catch (Exception e) {
+			e.printStackTrace();
+		}
+		finally {
+			if(oStream!=null) {
+				try {
+					oStream.close();
+				} catch (IOException e) {
+					e.printStackTrace();
+				}
+			}
+		}
 		return false;
 	}
 
@@ -250,10 +300,13 @@ public class MyCode extends CodeV3 {
 			super.access.setVersion(Constants.V3);
 			java.security.cert.X509Certificate certificate=(java.security.cert.X509Certificate) localKeyStore.getCertificate(keypair_name);
 			
-			int retInt=1;
+			int retInt=0;
 			try {
 				PublicKey pubKey=certificate.getPublicKey();
 				certificate.verify(pubKey);
+				if(localKeyStore.isCertificateEntry(keypair_name)) {
+					retInt=2;
+				}
 			}
 			catch(Exception ex) {
 				retInt=0;
