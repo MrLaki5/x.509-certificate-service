@@ -177,7 +177,7 @@ public class MyCode extends CodeV3 {
 				certificates[0]=certificate;			
 				KeyStore tempKeyStore=KeyStore.getInstance("PKCS12");
 				tempKeyStore.load(null, password.toCharArray());
-				tempKeyStore.setKeyEntry(keypair_name, localKeyStore.getKey(keypair_name, null), null, certificates);		
+				tempKeyStore.setKeyEntry(keypair_name, localKeyStore.getKey(keypair_name, null), password.toCharArray(), certificates);		
 				oStream=new FileOutputStream(file);
 				tempKeyStore.store(oStream, password.toCharArray());
 				oStream.flush();
@@ -308,7 +308,7 @@ public class MyCode extends CodeV3 {
 				while(keyStoreAliases.hasMoreElements()) {
 					String tempAlias=keyStoreAliases.nextElement();
 					java.security.cert.Certificate certificate=tempKeyStore.getCertificate(tempAlias);
-					saveKeyPairToLocalStorage(tempAlias, tempKeyStore.getKey(tempAlias, null), certificate);
+					saveKeyPairToLocalStorage(keypair_name, tempKeyStore.getKey(tempAlias, password.toCharArray()), certificate);
 				}
 				return true;
 			} catch (Exception e) {
