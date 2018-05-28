@@ -51,6 +51,7 @@ import org.bouncycastle.crypto.paddings.PKCS7Padding;
 import org.bouncycastle.crypto.params.RSAKeyParameters;
 import org.bouncycastle.crypto.util.PublicKeyFactory;
 import org.bouncycastle.jcajce.provider.asymmetric.x509.CertificateFactory;
+import org.bouncycastle.jce.X509Principal;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.bouncycastle.operator.ContentSigner;
 import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
@@ -81,6 +82,19 @@ public class MyCode extends CodeV3 {
 		alias=alias.toLowerCase();
 		java.security.cert.Certificate []certificates= new java.security.cert.X509Certificate[1];
 		certificates[0]=certificate;
+		try {
+			localKeyStore.setKeyEntry(alias, key, null, certificates);
+			saveLocalKeystore();
+			loadLocalKeystore();
+			return true;
+		} catch (KeyStoreException e) {
+			e.printStackTrace();
+		}
+		return false;
+	}
+	
+	protected boolean saveKeyPairToLocalStorage(String alias, Key key, java.security.cert.Certificate[] certificates) {
+		alias=alias.toLowerCase();
 		try {
 			localKeyStore.setKeyEntry(alias, key, null, certificates);
 			saveLocalKeystore();
@@ -308,11 +322,27 @@ public class MyCode extends CodeV3 {
 			}	
 			is = new FileInputStream(file);
 			java.security.cert.CertificateFactory cf = java.security.cert.CertificateFactory.getInstance("X509");
-			java.util.Iterator i = cf.generateCertificates( is ).iterator();
+			java.util.Collection collection=cf.generateCertificates( is );
+			java.util.Iterator i = collection.iterator();
+			java.security.cert.X509Certificate[] certChain=new java.security.cert.X509Certificate[collection.size()];
+			int p=0;
 			while ( i.hasNext() ) 
 			{
 			   java.security.cert.X509Certificate c = (java.security.cert.X509Certificate)i.next();
-			   int ii=5+34;
+			   certChain[p]=c;
+			   p++;
+			}
+			java.security.cert.X509Certificate oldCert=(X509Certificate) localKeyStore.getCertificate(keypair_name);
+			if(oldCert!=null && certChain.length>1) {
+				X500Principal oldSubPrincipal=oldCert.getSubjectX500Principal();
+				X500Principal newSubPrincipal=certChain[0].getSubjectX500Principal();
+				
+				if(oldSubPrincipal.toString().equals(newSubPrincipal.toString())) {
+					Key key=localKeyStore.getKey(keypair_name, null);
+					localKeyStore.deleteEntry(keypair_name);
+					saveKeyPairToLocalStorage(keypair_name, key, certChain);
+				}
+				return true;
 			}
 		} catch (Exception e) {
 			e.printStackTrace();
@@ -442,6 +472,11 @@ public class MyCode extends CodeV3 {
 				certificate.verify(pubKey);
 				if(localKeyStore.isCertificateEntry(keypair_name)) {
 					retInt=2;
+				}
+				else {
+					if(localKeyStore.getCertificateChain(keypair_name).length>1) {
+						retInt=1;
+					}
 				}
 			}
 			catch(Exception ex) {
