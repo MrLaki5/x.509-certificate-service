@@ -13,6 +13,9 @@ import java.security.KeyPair;
 import java.security.KeyPairGenerator;
 import java.security.KeyStore;
 import java.security.KeyStoreException;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.security.NoSuchProviderException;
 import java.security.Principal;
 import java.security.PrivateKey;
 import java.security.PublicKey;
@@ -317,20 +320,20 @@ public class MyCode extends CodeV3 {
 		FileInputStream is=null;
 		try {
 			File file=new File(filePath);
-			if (!file.exists()) {
-				file.createNewFile();
-			}	
+			if(!file.exists()) {
+				return false;
+			}
 			is = new FileInputStream(file);
 			java.security.cert.CertificateFactory cf = java.security.cert.CertificateFactory.getInstance("X509");
 			java.util.Collection collection=cf.generateCertificates( is );
 			java.util.Iterator i = collection.iterator();
 			java.security.cert.X509Certificate[] certChain=new java.security.cert.X509Certificate[collection.size()];
-			int p=0;
+			int p=certChain.length-1;
 			while ( i.hasNext() ) 
 			{
 			   java.security.cert.X509Certificate c = (java.security.cert.X509Certificate)i.next();
 			   certChain[p]=c;
-			   p++;
+			   p--;
 			}
 			java.security.cert.X509Certificate oldCert=(X509Certificate) localKeyStore.getCertificate(keypair_name);
 			if(oldCert!=null && certChain.length>1) {
@@ -340,9 +343,10 @@ public class MyCode extends CodeV3 {
 				if(oldSubPrincipal.toString().equals(newSubPrincipal.toString())) {
 					Key key=localKeyStore.getKey(keypair_name, null);
 					localKeyStore.deleteEntry(keypair_name);
-					saveKeyPairToLocalStorage(keypair_name, key, certChain);
+					saveKeyPairToLocalStorage(keypair_name, key, certChain[0]);
+					loadKeypair(keypair_name);
+					return true;
 				}
-				return true;
 			}
 		} catch (Exception e) {
 			e.printStackTrace();
@@ -468,19 +472,17 @@ public class MyCode extends CodeV3 {
 			
 			int retInt=0;
 			try {
-				PublicKey pubKey=certificate.getPublicKey();
-				certificate.verify(pubKey);
 				if(localKeyStore.isCertificateEntry(keypair_name)) {
 					retInt=2;
 				}
-				else {
-					if(localKeyStore.getCertificateChain(keypair_name).length>1) {
-						retInt=1;
-					}
+				PublicKey pubKey=certificate.getPublicKey();
+				certificate.verify(pubKey);
+				if(canSign(keypair_name)) {
+					retInt=1;
 				}
 			}
 			catch(Exception ex) {
-				retInt=0;
+				retInt=1;
 			}
 			
 			Principal principal=certificate.getSubjectDN();
@@ -511,7 +513,7 @@ public class MyCode extends CodeV3 {
 				}
 			}
 			
-			if(retInt==2) {
+			if(retInt==2 || retInt==1) {
 				principal=certificate.getIssuerDN();
 				params=principal.getName().split(", ");
 				String issStr="";
@@ -821,7 +823,7 @@ public class MyCode extends CodeV3 {
 				X509V3CertificateGenerator gen= new X509V3CertificateGenerator();	
 				gen.setSerialNumber(serialNumber);
 				gen.setSubjectDN(x509Name);
-				gen.setIssuerDN(x509Name);
+				gen.setIssuerDN(caCertificate.getSubjectX500Principal());
 				gen.setNotBefore(super.access.getNotBefore());
 				gen.setNotAfter(super.access.getNotAfter());
 				gen.setSignatureAlgorithm(algorithm);
