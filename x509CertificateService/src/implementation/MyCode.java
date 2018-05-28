@@ -3,10 +3,12 @@ package implementation;
 import java.io.DataInputStream;
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.math.BigInteger;
 import java.security.Key;
+import java.security.KeyFactory;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
 import java.security.KeyStore;
@@ -17,6 +19,7 @@ import java.security.PublicKey;
 import java.security.Security;
 import java.security.cert.X509Certificate;
 import java.security.interfaces.RSAPublicKey;
+import java.security.spec.RSAPublicKeySpec;
 import java.text.SimpleDateFormat;
 import java.util.Base64;
 import java.util.Date;
@@ -35,15 +38,26 @@ import org.bouncycastle.asn1.x509.Attribute;
 import org.bouncycastle.asn1.x509.Extension;
 import org.bouncycastle.asn1.x509.KeyUsage;
 import org.bouncycastle.asn1.x509.SubjectDirectoryAttributes;
+import org.bouncycastle.asn1.x509.SubjectPublicKeyInfo;
 import org.bouncycastle.asn1.x509.Time;
 import org.bouncycastle.asn1.x509.X509Extensions;
 import org.bouncycastle.asn1.x509.X509Name;
+import org.bouncycastle.cert.jcajce.JcaX509CertificateHolder;
+import org.bouncycastle.cms.CMSProcessableByteArray;
+import org.bouncycastle.cms.CMSSignedData;
+import org.bouncycastle.cms.CMSSignedDataGenerator;
+import org.bouncycastle.cms.CMSTypedData;
+import org.bouncycastle.crypto.paddings.PKCS7Padding;
+import org.bouncycastle.crypto.params.RSAKeyParameters;
+import org.bouncycastle.crypto.util.PublicKeyFactory;
+import org.bouncycastle.jcajce.provider.asymmetric.x509.CertificateFactory;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.bouncycastle.operator.ContentSigner;
 import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
 import org.bouncycastle.pkcs.PKCS10CertificationRequest;
 import org.bouncycastle.pkcs.PKCS10CertificationRequestBuilder;
 import org.bouncycastle.pkcs.jcajce.JcaPKCS10CertificationRequestBuilder;
+import org.bouncycastle.util.CollectionStore;
 import org.bouncycastle.x509.X509V3CertificateGenerator;
 import org.bouncycastle.x509.extension.X509ExtensionUtil;
 
@@ -55,7 +69,7 @@ public class MyCode extends CodeV3 {
 	
 	private static String LOCAL_KEY_STORE_PATH="/Users/milanlazarevic/Desktop/myStore.pkcs12";
 	private static String LOCAL_KEY_STORAGE_PASS="password";
-	
+	private PKCS10CertificationRequest importedCsr;
 	private KeyStore localKeyStore;
 
 	public MyCode(boolean[] algorithm_conf, boolean[] extensions_conf, boolean extensions_rules) throws GuiException {
@@ -285,8 +299,33 @@ public class MyCode extends CodeV3 {
 	}
 
 	@Override
-	public boolean importCAReply(String arg0, String arg1) {
-		// TODO Auto-generated method stub
+	public boolean importCAReply(String filePath, String keypair_name) {
+		FileInputStream is=null;
+		try {
+			File file=new File(filePath);
+			if (!file.exists()) {
+				file.createNewFile();
+			}	
+			is = new FileInputStream(file);
+			java.security.cert.CertificateFactory cf = java.security.cert.CertificateFactory.getInstance("X509");
+			java.util.Iterator i = cf.generateCertificates( is ).iterator();
+			while ( i.hasNext() ) 
+			{
+			   java.security.cert.X509Certificate c = (java.security.cert.X509Certificate)i.next();
+			   int ii=5+34;
+			}
+		} catch (Exception e) {
+			e.printStackTrace();
+		}
+		finally {
+			if(is!=null) {
+				try {
+					is.close();
+				} catch (IOException e) {
+					e.printStackTrace();
+				}
+			}
+		}
 		return false;
 	}
 
@@ -300,6 +339,7 @@ public class MyCode extends CodeV3 {
 			java.nio.file.Path path = java.nio.file.Paths.get(filePath);
 			byte[] data = java.nio.file.Files.readAllBytes(path);
 			PKCS10CertificationRequest csrr=new PKCS10CertificationRequest(data);
+			importedCsr=csrr;
 			String tempVr=csrr.getSubject().toString();
 			String[] params=tempVr.split(",");
 			String subStr="";
@@ -722,8 +762,171 @@ public class MyCode extends CodeV3 {
 	}
 
 	@Override
-	public boolean signCSR(String arg0, String arg1, String arg2) {
-		// TODO Auto-generated method stub
+	public boolean signCSR(String filePath, String keypair_name, String algorithm) {
+		FileOutputStream oStream = null;
+		try {
+			java.security.cert.X509Certificate caCertificate=(java.security.cert.X509Certificate) localKeyStore.getCertificate(keypair_name);
+			if(caCertificate!=null && importedCsr!=null) {
+				
+				SubjectPublicKeyInfo pkInfo = importedCsr.getSubjectPublicKeyInfo();
+				RSAKeyParameters rsa = (RSAKeyParameters) PublicKeyFactory.createKey(pkInfo);
+				RSAPublicKeySpec rsaSpec = new RSAPublicKeySpec(rsa.getModulus(), rsa.getExponent());
+				KeyFactory kf = KeyFactory.getInstance("RSA");
+				PublicKey rsaPub = kf.generatePublic(rsaSpec);
+
+				
+				X509Name x509Name= new X509Name(
+						"C=" + this.access.getSubjectCountry() + ", " +
+						"ST=" + this.access.getSubjectState() + ", " +
+						"L=" + this.access.getSubjectLocality()+ ", " +
+						"O=" + this.access.getSubjectOrganization() + ", " +
+						"OU=" + this.access.getSubjectOrganizationUnit() + ", " +
+						"CN=" + this.access.getSubjectCommonName());
+				BigInteger serialNumber=new BigInteger(this.access.getSerialNumber());      
+				X509V3CertificateGenerator gen= new X509V3CertificateGenerator();	
+				gen.setSerialNumber(serialNumber);
+				gen.setSubjectDN(x509Name);
+				gen.setIssuerDN(x509Name);
+				gen.setNotBefore(super.access.getNotBefore());
+				gen.setNotAfter(super.access.getNotAfter());
+				gen.setSignatureAlgorithm(algorithm);
+				gen.setPublicKey(rsaPub);
+				
+				boolean[] keyUsageValues=super.access.getKeyUsage();
+				int keyusageValue=0;
+				for(int i=0; i<keyUsageValues.length; i++) {
+					if(keyUsageValues[i]) {
+						switch(i) {
+							case 0:
+								keyusageValue=keyusageValue|KeyUsage.digitalSignature;
+								break;
+							case 1:
+								keyusageValue=keyusageValue|KeyUsage.nonRepudiation;
+								break;
+							case 2:
+								keyusageValue=keyusageValue|KeyUsage.keyEncipherment;
+								break;
+							case 3:
+								keyusageValue=keyusageValue|KeyUsage.dataEncipherment;
+								break;
+							case 4:
+								keyusageValue=keyusageValue|KeyUsage.keyAgreement;
+								break;
+							case 5:
+								keyusageValue=keyusageValue|KeyUsage.keyCertSign;
+								break;
+							case 6:
+								keyusageValue=keyusageValue|KeyUsage.cRLSign;
+								break;
+							case 7:
+								keyusageValue=keyusageValue|KeyUsage.encipherOnly;
+								break;
+							case 8:
+								keyusageValue=keyusageValue|KeyUsage.decipherOnly;
+								break;
+						}
+					}
+				}
+				if(keyusageValue!=0) {
+					KeyUsage keyUsage=new KeyUsage(keyusageValue);
+					gen.addExtension(X509Extensions.KeyUsage, true, keyUsage);
+				}
+				
+				Vector<Attribute> attributesTemp = new Vector<Attribute>();
+				boolean flagsubDirAtrUsage=false;
+				boolean isCriticalsubDirAtrUsage=super.access.isCritical(Constants.SDA);
+				String gender=super.access.getGender();
+				if(!gender.isEmpty()) {
+					attributesTemp.add(new Attribute(BCStyle.GENDER, new DERSet(new DEROctetString(gender.getBytes()))));
+					flagsubDirAtrUsage=true;
+				}
+				String countryAndCitizenship=super.access.getSubjectDirectoryAttribute(Constants.COC);
+				if(!countryAndCitizenship.isEmpty()) {
+					attributesTemp.add(new Attribute(BCStyle.COUNTRY_OF_CITIZENSHIP, new DERSet(new DEROctetString(countryAndCitizenship.getBytes()))));
+					flagsubDirAtrUsage=true;
+				}
+				String dateOfBirth=super.access.getDateOfBirth();
+				if(!dateOfBirth.isEmpty()) {
+					SimpleDateFormat simpleDateFormat = new SimpleDateFormat("yyyyMMdd");
+					Date dateOfBirthDate = simpleDateFormat.parse(dateOfBirth);
+					attributesTemp.add(new Attribute(BCStyle.DATE_OF_BIRTH, new DERSet(new Time(dateOfBirthDate))));
+					flagsubDirAtrUsage=true;
+				}
+				String placeOfBirth=super.access.getSubjectDirectoryAttribute(Constants.POB);
+				if(!placeOfBirth.isEmpty()) {
+					attributesTemp.add(new Attribute(BCStyle.PLACE_OF_BIRTH, new DERSet(new DEROctetString(placeOfBirth.getBytes()))));
+					flagsubDirAtrUsage=true;
+				}
+				if(flagsubDirAtrUsage) {
+					SubjectDirectoryAttributes attributes=new SubjectDirectoryAttributes(attributesTemp);			
+					gen.addExtension(X509Extensions.SubjectDirectoryAttributes, isCriticalsubDirAtrUsage, attributes);
+				}
+				
+				boolean inhibitAnyPolicyFlag=super.access.getInhibitAnyPolicy();
+				boolean isCriticalInhibitAnyPolicyFlag=super.access.isCritical(Constants.IAP);
+				if(inhibitAnyPolicyFlag) {
+					String skipCerts=super.access.getSkipCerts();
+					if(!skipCerts.isEmpty()) {
+						ASN1Integer skipCertsInteger = new ASN1Integer(new BigInteger(skipCerts));
+						gen.addExtension(Extension.inhibitAnyPolicy, isCriticalInhibitAnyPolicyFlag, skipCertsInteger);
+					}
+				}
+				
+				java.security.cert.X509Certificate certificate=gen.generate((PrivateKey)localKeyStore.getKey(keypair_name, null), "BC");
+				
+				
+				
+
+				CMSSignedDataGenerator gen1 = new CMSSignedDataGenerator();
+				java.util.List<X509Certificate> certificates = new java.util.ArrayList<>();
+				
+				// I chose to add the CA certificate
+				certificates.add((X509Certificate) caCertificate);
+				
+				// In this case, this is a certificate that I need to add
+				certificates.add((X509Certificate) certificate);
+				
+				java.util.Collection<JcaX509CertificateHolder> x509CertificateHolder = new java.util.ArrayList<>();
+				
+				// Of course, we need to handle the exceptions...
+				for (X509Certificate certificateTemp : certificates) {
+					x509CertificateHolder.add(new JcaX509CertificateHolder(certificateTemp));
+				}
+				CollectionStore<JcaX509CertificateHolder> store = new CollectionStore<>(x509CertificateHolder);
+				
+				// The final stage.
+				 gen1.addCertificates(store);
+
+				 
+				CMSTypedData content = new CMSProcessableByteArray(certificate.getEncoded());
+				 
+				CMSSignedData signedData = gen1.generate(content, true);
+				 
+				File file=new File(filePath);
+				if (!file.exists()) {
+					file.createNewFile();
+				}		
+				
+				oStream=new FileOutputStream(filePath);
+				oStream.write(signedData.getEncoded());
+				oStream.flush();
+				
+				return true;
+				
+				
+			}
+		} catch (Exception e) {
+			e.printStackTrace();
+		}
+		finally {
+			if(oStream!=null) {
+				try {
+					oStream.close();
+				} catch (IOException e) {
+					e.printStackTrace();
+				}
+			}
+		}
 		return false;
 	}
 
