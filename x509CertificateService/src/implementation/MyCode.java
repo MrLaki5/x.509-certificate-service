@@ -1,9 +1,7 @@
 package implementation;
 
-import java.io.DataInputStream;
 import java.io.File;
 import java.io.FileInputStream;
-import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.math.BigInteger;
@@ -13,9 +11,6 @@ import java.security.KeyPair;
 import java.security.KeyPairGenerator;
 import java.security.KeyStore;
 import java.security.KeyStoreException;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-import java.security.NoSuchProviderException;
 import java.security.Principal;
 import java.security.PrivateKey;
 import java.security.PublicKey;
@@ -44,16 +39,13 @@ import org.bouncycastle.asn1.x509.SubjectDirectoryAttributes;
 import org.bouncycastle.asn1.x509.SubjectPublicKeyInfo;
 import org.bouncycastle.asn1.x509.Time;
 import org.bouncycastle.asn1.x509.X509Extensions;
-import org.bouncycastle.asn1.x509.X509Name;
 import org.bouncycastle.cert.jcajce.JcaX509CertificateHolder;
 import org.bouncycastle.cms.CMSProcessableByteArray;
 import org.bouncycastle.cms.CMSSignedData;
 import org.bouncycastle.cms.CMSSignedDataGenerator;
 import org.bouncycastle.cms.CMSTypedData;
-import org.bouncycastle.crypto.paddings.PKCS7Padding;
 import org.bouncycastle.crypto.params.RSAKeyParameters;
 import org.bouncycastle.crypto.util.PublicKeyFactory;
-import org.bouncycastle.jcajce.provider.asymmetric.x509.CertificateFactory;
 import org.bouncycastle.jce.X509Principal;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.bouncycastle.operator.ContentSigner;
@@ -71,21 +63,30 @@ import x509.v3.CodeV3;
 
 public class MyCode extends CodeV3 {
 	
+	//Path of application key store
 	private static String LOCAL_KEY_STORE_PATH="/Users/milanlazarevic/Desktop/myStore.pkcs12";
+	//Password of application key store
 	private static String LOCAL_KEY_STORAGE_PASS="password";
+	//Object used in signing certification request (CSR) 
 	private PKCS10CertificationRequest importedCsr;
+	//Application key store
 	private KeyStore localKeyStore;
+	//exportKeypair exports whole chain-true, exports only head certificate-false
+	private static boolean KEYPAIR_EXPORT_PARAM=true;
 
 	public MyCode(boolean[] algorithm_conf, boolean[] extensions_conf, boolean extensions_rules) throws GuiException {
 		super(algorithm_conf, extensions_conf, extensions_rules);
+		//Adding bouncy castle as provider
 		Security.addProvider(new BouncyCastleProvider());
 	}
 	
+	//Method for saving one untrusted certificate (can be CA) or key pair to key store
 	protected boolean saveKeyPairToLocalStorage(String alias, Key key, java.security.cert.Certificate certificate) {
-		alias=alias.toLowerCase();
+		//Create certificate chain with one element
 		java.security.cert.Certificate []certificates= new java.security.cert.X509Certificate[1];
 		certificates[0]=certificate;
 		try {
+			//Save chain to key store and key store to file, reload
 			localKeyStore.setKeyEntry(alias, key, null, certificates);
 			saveLocalKeystore();
 			loadLocalKeystore();
@@ -96,9 +97,10 @@ public class MyCode extends CodeV3 {
 		return false;
 	}
 	
+	//Method for saving untrusted certificate chain (can be CA) or key pair with chain to key store
 	protected boolean saveKeyPairToLocalStorage(String alias, Key key, java.security.cert.Certificate[] certificates) {
-		alias=alias.toLowerCase();
 		try {
+			//Save chain to key store and key store to file, reload
 			localKeyStore.setKeyEntry(alias, key, null, certificates);
 			saveLocalKeystore();
 			loadLocalKeystore();
@@ -109,9 +111,10 @@ public class MyCode extends CodeV3 {
 		return false;
 	}
 	
+	//Method for saving trusted certificate to key store
 	protected boolean saveCertificateToLocalStorage(String alias, java.security.cert.Certificate certificate) {
-		alias=alias.toLowerCase();
 		try {
+			//Save certificate to key store and key store to file, reload
 			localKeyStore.setCertificateEntry(alias, certificate);
 			saveLocalKeystore();
 			loadLocalKeystore();
@@ -121,13 +124,46 @@ public class MyCode extends CodeV3 {
 		}
 		return false;
 	}
-
+	
+	//Method for checking key store entry type: 0-key pair, 1-not trusted certificate, 2-trusted certificate, -1 error
+	protected int checkTypeOfKeyStoreEntry(java.security.cert.Certificate certificate) {
+		String keypair_name;
+		try {
+			keypair_name = localKeyStore.getCertificateAlias(certificate);
+		} catch (KeyStoreException e) {
+			e.printStackTrace();
+			return -1;
+		}
+		int retInt=0;
+		try {
+			//If certificate is in certificate entry then its trusted certificate
+			if(localKeyStore.isCertificateEntry(keypair_name)) {
+				retInt=2;
+			}
+			//Check if certificate is self signed
+			PublicKey pubKey=certificate.getPublicKey();
+			certificate.verify(pubKey);
+			//If its self signed and it can sign, its CA
+			if(canSign(keypair_name)) {
+				retInt=1;
+			}
+		}
+		catch(Exception ex) {
+			//Its not self signed but its not trusted
+			retInt=1;
+		}
+		return retInt;
+	}
+	
+	//Used to check if certificate is CA in GUI
 	@Override
 	public boolean canSign(String keypair_name) {
 		try {
 			java.security.cert.X509Certificate certificate= (java.security.cert.X509Certificate) localKeyStore.getCertificate(keypair_name);
 			if(certificate!=null) {
+				//If certificate is CA it has set basic constraints extension
 				if(certificate.getBasicConstraints()!=-1) {
+					//Extra check for bug on android 1.7
 					if(certificate.getKeyUsage()[5]==true) {
 						return true;
 					}
@@ -139,18 +175,33 @@ public class MyCode extends CodeV3 {
 		return false;
 	}
 
+	//Method used when exporting certificate sign request (CSR)
 	@Override
 	public boolean exportCSR(String filePath, String keypair_name, String algorithm) {
 		FileOutputStream oStream=null;	
 		try {
-			java.security.cert.X509Certificate certificate=(X509Certificate) localKeyStore.getCertificate(keypair_name);	
+			java.security.cert.X509Certificate certificate=(X509Certificate) localKeyStore.getCertificate(keypair_name);
 			if(certificate!=null) {
+				//Check if certificate is key pair
+				int certType=checkTypeOfKeyStoreEntry(certificate);
+				if(certType!=-1) {
+					if(certType==2 || certType==1) {
+						super.access.reportError("CSR only available for keypair");
+						return false;
+					}
+				}
+				else {
+					return false;
+				}
 				File file=new File(filePath);
 				if (!file.exists()) {
 					file.createNewFile();
 				}
+				//Build PKCS#10 object and flush it into file
 				oStream=new FileOutputStream(file);
+				//Get subject info
 				X500Principal subject=certificate.getSubjectX500Principal();
+				//Get public key from key pair
 				PublicKey publicKey=certificate.getPublicKey();
 				PKCS10CertificationRequestBuilder builder = new JcaPKCS10CertificationRequestBuilder(subject, publicKey);		
 				ContentSigner signGen = new JcaContentSignerBuilder(algorithm).build((PrivateKey)localKeyStore.getKey(keypair_name, null));		
@@ -175,26 +226,46 @@ public class MyCode extends CodeV3 {
 		return false;
 	}
 
+	//Method for exporting certificate
 	@Override
 	public boolean exportCertificate(String fileName, String keypair_name, int encoding, int format) {
 		FileOutputStream oStream=null;
 		try {
 			if(localKeyStore.containsAlias(keypair_name)) {
 				java.security.cert.Certificate certificate=(java.security.cert.Certificate) localKeyStore.getCertificate(keypair_name);
+				if(certificate==null) {
+					return false;
+				}
+				//Check if certificate is not key pair
+				int certType=checkTypeOfKeyStoreEntry(certificate);
+				if(certType!=-1) {
+					if(certType==0) {
+						super.access.reportError("Certificate export only available for certificates");
+						return false;
+					}
+				}
+				else {
+					return false;
+				}
 				File file=new File(fileName);
 				if (!file.exists()) {
 					file.createNewFile();
 				}
 				oStream=new FileOutputStream(file);
-				
+				//PEM encoding
 				if(encoding==1) {
+					//Head
 					if(format==0) {
+						//Put head certificate to file stream
 						byte[] bCert=certificate.getEncoded();
 						String encoded="-----BEGIN CERTIFICATE-----\n" + Base64.getEncoder().encodeToString(bCert)+ "-----END CERTIFICATE-----";
 						oStream.write(encoded.getBytes());
 					}
+					//Entire chain (can only be in PEM encoding)
 					else {
+						//Put chain to file stream
 						java.security.cert.Certificate[] certificates= localKeyStore.getCertificateChain(keypair_name);
+						//If its certificate entry, chain will be null. So create it
 						if(certificates==null) {
 							certificates=new java.security.cert.X509Certificate[1];
 							certificates[0]=certificate;
@@ -207,10 +278,11 @@ public class MyCode extends CodeV3 {
 						}
 					}
 				}
+				//DER encoding
 				else {
+					//Put certificate to file stream
 					oStream.write(certificate.getEncoded());
 				}
-				
 				oStream.flush();
 				return true;
 			}
@@ -229,18 +301,40 @@ public class MyCode extends CodeV3 {
 		return false;
 	}
 
+	//Method for exporting key pair
 	@Override
 	public boolean exportKeypair(String keypair_name, String fileName, String password) {
 		FileOutputStream oStream=null;
 		try {
 			if(localKeyStore.containsAlias(keypair_name)) {
 				java.security.cert.X509Certificate certificate=(java.security.cert.X509Certificate) localKeyStore.getCertificate(keypair_name);
+				//Check if certificate is not trusted. Trusted certificate does not have private key in key store
+				int certType=checkTypeOfKeyStoreEntry(certificate);
+				if(certType!=-1) {
+					if(certType==2) {
+						super.access.reportError("Private key unknown for given certificate");
+						return false;
+					}
+				}
+				else {
+					return false;
+				}
 				File file=new File(fileName);
 				if (!file.exists()) {
 					file.createNewFile();
-				}		
-				java.security.cert.Certificate[] certificates= new java.security.cert.X509Certificate[1];
-				certificates[0]=certificate;			
+				}
+				java.security.cert.Certificate[] certificates=null;
+				//			TWO VARIANTS:
+				//		1: exportKeyPair exports whole chain
+				if(KEYPAIR_EXPORT_PARAM) {
+					certificates= localKeyStore.getCertificateChain(keypair_name);
+				}
+				//		2: exportKeyPair exports only head certificate
+				else {
+					certificates= new java.security.cert.X509Certificate[1];
+					certificates[0]=certificate;
+				}
+				//Put certificates in new export file and flush
 				KeyStore tempKeyStore=KeyStore.getInstance("PKCS12");
 				tempKeyStore.load(null, password.toCharArray());
 				tempKeyStore.setKeyEntry(keypair_name, localKeyStore.getKey(keypair_name, null), password.toCharArray(), certificates);		
@@ -264,6 +358,7 @@ public class MyCode extends CodeV3 {
 		return false;
 	}
 
+	//Method for getting name of public key algorithm of certificate
 	@Override
 	public String getCertPublicKeyAlgorithm(String keypair_name) {
 		java.security.cert.X509Certificate certificate;
@@ -276,6 +371,7 @@ public class MyCode extends CodeV3 {
 		return "";
 	}
 
+	//Method for getting length of RSA algorithm of certificate
 	@Override
 	public String getCertPublicKeyParameter(String keypair_name) {
 		java.security.cert.X509Certificate certificate;
@@ -290,11 +386,13 @@ public class MyCode extends CodeV3 {
 		return "";
 	}
 
+	//Method for getting info about subject of certificate
 	@Override
 	public String getSubjectInfo(String keypair_name) {
 		java.security.cert.X509Certificate certificate;
 		try {
 			certificate = (java.security.cert.X509Certificate) localKeyStore.getCertificate(keypair_name);
+			//Remove spaces and empty fields, so GUI can read it nicely
 			Principal principal=certificate.getSubjectDN();
 			String[] params=principal.getName().split(", ");
 			String subStr="";
@@ -315,6 +413,7 @@ public class MyCode extends CodeV3 {
 		return "";
 	}
 
+	//Method for importing signed certificate and replacing it with key pair
 	@Override
 	public boolean importCAReply(String filePath, String keypair_name) {
 		FileInputStream is=null;
@@ -323,6 +422,7 @@ public class MyCode extends CodeV3 {
 			if(!file.exists()) {
 				return false;
 			}
+			//Load CA reply to certificate chain
 			is = new FileInputStream(file);
 			java.security.cert.CertificateFactory cf = java.security.cert.CertificateFactory.getInstance("X509");
 			java.util.Collection collection=cf.generateCertificates( is );
@@ -339,11 +439,12 @@ public class MyCode extends CodeV3 {
 			if(oldCert!=null && certChain.length>1) {
 				X500Principal oldSubPrincipal=oldCert.getSubjectX500Principal();
 				X500Principal newSubPrincipal=certChain[0].getSubjectX500Principal();
-				
+				//Compare if imported certificate and selected key pair are same
 				if(oldSubPrincipal.toString().equals(newSubPrincipal.toString())) {
+					//Replace key pair with chain
 					Key key=localKeyStore.getKey(keypair_name, null);
 					localKeyStore.deleteEntry(keypair_name);
-					saveKeyPairToLocalStorage(keypair_name, key, certChain[0]);
+					saveKeyPairToLocalStorage(keypair_name, key, certChain);
 					loadKeypair(keypair_name);
 					return true;
 				}
@@ -363,6 +464,7 @@ public class MyCode extends CodeV3 {
 		return false;
 	}
 
+	//Method used for importing certificate sign request (CSR)
 	@Override
 	public String importCSR(String filePath) {
 		try {
@@ -370,10 +472,13 @@ public class MyCode extends CodeV3 {
 			if(!file.exists()) {
 				return null;
 			}
+			//Load PKCS#10 from file
 			java.nio.file.Path path = java.nio.file.Paths.get(filePath);
 			byte[] data = java.nio.file.Files.readAllBytes(path);
 			PKCS10CertificationRequest csrr=new PKCS10CertificationRequest(data);
+			//Save it to this (used in signing certificate later)
 			importedCsr=csrr;
+			//Load subject info and return it
 			String tempVr=csrr.getSubject().toString();
 			String[] params=tempVr.split(",");
 			String subStr="";
@@ -395,6 +500,7 @@ public class MyCode extends CodeV3 {
 		return null;
 	}
 
+	//Method used for importing certificate as trusted certificate
 	@Override
 	public boolean importCertificate(String filePath, String keypair_name) {
 		FileInputStream fStream=null;
@@ -404,13 +510,20 @@ public class MyCode extends CodeV3 {
 				return false;
 			}
 			fStream=new FileInputStream(filePath);
-			/*Collection  coll = java.security.cert.CertificateFactory.getInstance("X509").generateCertificates(fStream);
+			/*
+			
+			//Used if chain can be imported from certificate file 
+			
+			Collection  coll = java.security.cert.CertificateFactory.getInstance("X509").generateCertificates(fStream);
 			Iterator iterator = coll.iterator();
 			while(iterator.hasNext()) {
 				java.security.cert.Certificate tempCert = (java.security.cert.Certificate) coll.iterator().next();
 				saveCertificateToLocalStorage(keypair_name, tempCert);
 				break;
-			}*/
+			}
+			
+			*/
+			//Load first certificate from file and save it to key store ass trusted certificate
 			java.security.cert.Certificate tempCert =java.security.cert.CertificateFactory.getInstance("X509").generateCertificate(fStream);
 			saveCertificateToLocalStorage(keypair_name, tempCert);
 			return true;
@@ -429,12 +542,14 @@ public class MyCode extends CodeV3 {
 		return false;
 	}
 
+	//Method used for importing key pair
 	@Override
 	public boolean importKeypair(String keypair_name, String filePath, String password) {
 		File file= new File(filePath);
 		FileInputStream inStream=null;
 		if(file.exists()) {
 			try {
+				//Go through all elements in key store and add them to application key storage (without trusted certificates (they have no private key))
 				KeyStore tempKeyStore=KeyStore.getInstance("PKCS12");
 				inStream= new FileInputStream(file);
 				tempKeyStore.load(inStream, password.toCharArray());
@@ -442,7 +557,9 @@ public class MyCode extends CodeV3 {
 				while(keyStoreAliases.hasMoreElements()) {
 					String tempAlias=keyStoreAliases.nextElement();
 					java.security.cert.Certificate certificate=tempKeyStore.getCertificate(tempAlias);
-					saveKeyPairToLocalStorage(keypair_name, tempKeyStore.getKey(tempAlias, password.toCharArray()), certificate);
+					if(!tempKeyStore.isCertificateEntry(tempAlias)) {
+						saveKeyPairToLocalStorage(keypair_name, tempKeyStore.getKey(tempAlias, password.toCharArray()), certificate);
+					}
 				}
 				return true;
 			} catch (Exception e) {
@@ -461,6 +578,7 @@ public class MyCode extends CodeV3 {
 		return false;
 	}
 
+	//Method for loading selected key pair to GUI
 	@Override
 	public int loadKeypair(String keypair_name) {
 		try {
@@ -469,22 +587,15 @@ public class MyCode extends CodeV3 {
 			}
 			super.access.setVersion(Constants.V3);
 			java.security.cert.X509Certificate certificate=(java.security.cert.X509Certificate) localKeyStore.getCertificate(keypair_name);
-			
-			int retInt=0;
-			try {
-				if(localKeyStore.isCertificateEntry(keypair_name)) {
-					retInt=2;
-				}
-				PublicKey pubKey=certificate.getPublicKey();
-				certificate.verify(pubKey);
-				if(canSign(keypair_name)) {
-					retInt=1;
-				}
+			if(certificate==null) {
+				return -1;
 			}
-			catch(Exception ex) {
-				retInt=1;
+			//Check type of key pair
+			int retInt=checkTypeOfKeyStoreEntry(certificate);
+			if(retInt==-1) {
+				return retInt;
 			}
-			
+			//Load subject info
 			Principal principal=certificate.getSubjectDN();
 			String[] params=principal.getName().split(", ");
 			for(int i=0; i<params.length; i++) {
@@ -512,7 +623,7 @@ public class MyCode extends CodeV3 {
 					}
 				}
 			}
-			
+			//If its certificate, load issuer info
 			if(retInt==2 || retInt==1) {
 				principal=certificate.getIssuerDN();
 				params=principal.getName().split(", ");
@@ -530,26 +641,26 @@ public class MyCode extends CodeV3 {
 				super.access.setIssuer(issStr);
 				super.access.setIssuerSignatureAlgorithm(certificate.getSigAlgName());
 			}
-			
+			//Load serial number
 			super.access.setSerialNumber(certificate.getSerialNumber().toString());
-			
+			//Load dates
 			super.access.setNotAfter(certificate.getNotAfter());
 			super.access.setNotBefore(certificate.getNotBefore());
-			
+			//Load algorithm
 			super.access.setPublicKeyDigestAlgorithm(certificate.getSigAlgName());
 			super.access.setSubjectSignatureAlgorithm(certificate.getPublicKey().getAlgorithm());
 			RSAPublicKey rsaPk = (RSAPublicKey) certificate.getPublicKey();
 			int pKLen=rsaPk.getModulus().bitLength();
 			super.access.setPublicKeyParameter(""+pKLen);	
-			
+			//Load key usage extension
 			boolean[] keyUsageVal=certificate.getKeyUsage();
 			if(keyUsageVal!=null) {
 				super.access.setKeyUsage(keyUsageVal);
 				super.access.setCritical(Constants.KU, true);
 			}
-			
+			//Find all critical extensions
 			Set<String> criticalExtensions=certificate.getCriticalExtensionOIDs();
-			
+			//Load subject directory extension
 			byte[] subjectDirectoryBytes=certificate.getExtensionValue(Extension.subjectDirectoryAttributes.toString());
 			try {
 				if(subjectDirectoryBytes!=null) {
@@ -579,7 +690,7 @@ public class MyCode extends CodeV3 {
 			catch(Exception ex) {
 				ex.printStackTrace();
 			}
-			
+			//Load inhabit any policy extension
 			byte[] inhabitAnyPolicyBytes = certificate.getExtensionValue(Extension.inhibitAnyPolicy.toString());
 			try {
 		        if (inhabitAnyPolicyBytes != null) {
@@ -593,10 +704,8 @@ public class MyCode extends CodeV3 {
 		        }
 			}
 			catch (IOException e) {
-				// TODO Auto-generated catch block
 				e.printStackTrace();
 			}
-			
 			return retInt;
 		} catch (KeyStoreException e) {
 			e.printStackTrace();
@@ -604,12 +713,14 @@ public class MyCode extends CodeV3 {
 		return -1;
 	}
 
+	//Method used for loading key store from file
 	@Override
 	public Enumeration<String> loadLocalKeystore() {
 		Enumeration<String> enumeration=null;
 		File file=new File(LOCAL_KEY_STORE_PATH);
 		FileInputStream inStream=null;
 		try {
+			//If key store does not exist create it
 			localKeyStore=KeyStore.getInstance("PKCS12");	
 			if(file.exists() && file.isFile()) {
 				inStream= new FileInputStream(file);
@@ -634,6 +745,7 @@ public class MyCode extends CodeV3 {
 		return enumeration;
 	}
 	
+	//Method used for saving key store to file
 	public void saveLocalKeystore() {
 		File file=new File(LOCAL_KEY_STORE_PATH);
 		FileOutputStream oStream=null;
@@ -658,6 +770,7 @@ public class MyCode extends CodeV3 {
 		}
 	}
 
+	//Method used for removing selected key pair from key store
 	@Override
 	public boolean removeKeypair(String keypair_name) {
 		try {
@@ -672,6 +785,7 @@ public class MyCode extends CodeV3 {
 		return false;
 	}
 
+	//Method used for deleting all key pairs from key storage
 	@Override
 	public void resetLocalKeystore() {
 		File file=new File(LOCAL_KEY_STORE_PATH);
@@ -681,6 +795,7 @@ public class MyCode extends CodeV3 {
 		this.loadLocalKeystore();
 	}
 
+	//Method for saving created key pair to key store
 	@SuppressWarnings("deprecation")
 	@Override
 	public boolean saveKeypair(String keypair_name) {	
@@ -688,27 +803,31 @@ public class MyCode extends CodeV3 {
 		KeyPairGenerator keyPairGenerator=null;
 		String algorithm=super.access.getPublicKeyDigestAlgorithm();
 		try {
+			//Generate keys
 			keyPairGenerator= KeyPairGenerator.getInstance("RSA", "BC");
 			int keySize=Integer.parseInt(super.access.getPublicKeyParameter());
 			keyPairGenerator.initialize(keySize);
 			keyPair=keyPairGenerator.generateKeyPair();	
-			X509Name x509Name= new X509Name(
+			//Get subject info
+			X509Principal x509Princ= new X509Principal(
 					"C=" + this.access.getSubjectCountry() + ", " +
 					"ST=" + this.access.getSubjectState() + ", " +
 					"L=" + this.access.getSubjectLocality()+ ", " +
 					"O=" + this.access.getSubjectOrganization() + ", " +
 					"OU=" + this.access.getSubjectOrganizationUnit() + ", " +
 					"CN=" + this.access.getSubjectCommonName());
-			BigInteger serialNumber=new BigInteger(this.access.getSerialNumber());      
+			//Get serial number
+			BigInteger serialNumber=new BigInteger(this.access.getSerialNumber());  
+			//Set information to builder
 			X509V3CertificateGenerator gen= new X509V3CertificateGenerator();	
 			gen.setSerialNumber(serialNumber);
-			gen.setSubjectDN(x509Name);
-			gen.setIssuerDN(x509Name);
+			gen.setSubjectDN(x509Princ);
+			gen.setIssuerDN(x509Princ);
 			gen.setNotBefore(super.access.getNotBefore());
 			gen.setNotAfter(super.access.getNotAfter());
 			gen.setSignatureAlgorithm(algorithm);
 			gen.setPublicKey(keyPair.getPublic());
-			
+			//Get key usage extension
 			boolean[] keyUsageValues=super.access.getKeyUsage();
 			int keyusageValue=0;
 			for(int i=0; i<keyUsageValues.length; i++) {
@@ -748,10 +867,14 @@ public class MyCode extends CodeV3 {
 				KeyUsage keyUsage=new KeyUsage(keyusageValue);
 				gen.addExtension(X509Extensions.KeyUsage, true, keyUsage);
 			}
-			
+			//Get subject directory attributes extension
 			Vector<Attribute> attributesTemp = new Vector<Attribute>();
 			boolean flagsubDirAtrUsage=false;
 			boolean isCriticalsubDirAtrUsage=super.access.isCritical(Constants.SDA);
+			if(isCriticalsubDirAtrUsage) {
+				super.access.reportError("Subject Directory Attributes extension must not be marked critical");
+				return false;
+			}
 			String gender=super.access.getGender();
 			if(!gender.isEmpty()) {
 				attributesTemp.add(new Attribute(BCStyle.GENDER, new DERSet(new DEROctetString(gender.getBytes()))));
@@ -778,7 +901,7 @@ public class MyCode extends CodeV3 {
 				SubjectDirectoryAttributes attributes=new SubjectDirectoryAttributes(attributesTemp);			
 				gen.addExtension(X509Extensions.SubjectDirectoryAttributes, isCriticalsubDirAtrUsage, attributes);
 			}
-			
+			//Get inhibit any policy extension
 			boolean inhibitAnyPolicyFlag=super.access.getInhibitAnyPolicy();
 			boolean isCriticalInhibitAnyPolicyFlag=super.access.isCritical(Constants.IAP);
 			if(inhibitAnyPolicyFlag) {
@@ -787,8 +910,12 @@ public class MyCode extends CodeV3 {
 					ASN1Integer skipCertsInteger = new ASN1Integer(new BigInteger(skipCerts));
 					gen.addExtension(Extension.inhibitAnyPolicy, isCriticalInhibitAnyPolicyFlag, skipCertsInteger);
 				}
+				else {
+					super.access.reportError("Skip certs must be set in inhibit any policy extension");
+					return false;
+				}
 			}
-			
+			//Save key pair to key store
 			java.security.cert.X509Certificate certificate=gen.generate(keyPair.getPrivate(), "BC");
 			saveKeyPairToLocalStorage(keypair_name, keyPair.getPrivate(), certificate);
 			return true;
@@ -798,37 +925,40 @@ public class MyCode extends CodeV3 {
 		return false;
 	}
 
+	//Method used when certificate authority (CA) is signing certificate sign request (CRS)
+	@SuppressWarnings("deprecation")
 	@Override
 	public boolean signCSR(String filePath, String keypair_name, String algorithm) {
 		FileOutputStream oStream = null;
 		try {
 			java.security.cert.X509Certificate caCertificate=(java.security.cert.X509Certificate) localKeyStore.getCertificate(keypair_name);
 			if(caCertificate!=null && importedCsr!=null) {
-				
+				//Get subject public key
 				SubjectPublicKeyInfo pkInfo = importedCsr.getSubjectPublicKeyInfo();
 				RSAKeyParameters rsa = (RSAKeyParameters) PublicKeyFactory.createKey(pkInfo);
 				RSAPublicKeySpec rsaSpec = new RSAPublicKeySpec(rsa.getModulus(), rsa.getExponent());
 				KeyFactory kf = KeyFactory.getInstance("RSA");
 				PublicKey rsaPub = kf.generatePublic(rsaSpec);
-
-				
-				X509Name x509Name= new X509Name(
+				//Get subject info
+				X509Principal x509Princ= new X509Principal(
 						"C=" + this.access.getSubjectCountry() + ", " +
 						"ST=" + this.access.getSubjectState() + ", " +
 						"L=" + this.access.getSubjectLocality()+ ", " +
 						"O=" + this.access.getSubjectOrganization() + ", " +
 						"OU=" + this.access.getSubjectOrganizationUnit() + ", " +
 						"CN=" + this.access.getSubjectCommonName());
-				BigInteger serialNumber=new BigInteger(this.access.getSerialNumber());      
+				//Get serial number
+				BigInteger serialNumber=new BigInteger(this.access.getSerialNumber());
+				//Load certificate info to generator
 				X509V3CertificateGenerator gen= new X509V3CertificateGenerator();	
 				gen.setSerialNumber(serialNumber);
-				gen.setSubjectDN(x509Name);
+				gen.setSubjectDN(x509Princ);
 				gen.setIssuerDN(caCertificate.getSubjectX500Principal());
 				gen.setNotBefore(super.access.getNotBefore());
 				gen.setNotAfter(super.access.getNotAfter());
 				gen.setSignatureAlgorithm(algorithm);
 				gen.setPublicKey(rsaPub);
-				
+				//Load key usage extension
 				boolean[] keyUsageValues=super.access.getKeyUsage();
 				int keyusageValue=0;
 				for(int i=0; i<keyUsageValues.length; i++) {
@@ -868,10 +998,14 @@ public class MyCode extends CodeV3 {
 					KeyUsage keyUsage=new KeyUsage(keyusageValue);
 					gen.addExtension(X509Extensions.KeyUsage, true, keyUsage);
 				}
-				
+				//Get subject directory attributes extension
 				Vector<Attribute> attributesTemp = new Vector<Attribute>();
 				boolean flagsubDirAtrUsage=false;
 				boolean isCriticalsubDirAtrUsage=super.access.isCritical(Constants.SDA);
+				if(isCriticalsubDirAtrUsage) {
+					super.access.reportError("Subject Directory Attributes extension must not be marked critical");
+					return false;
+				}
 				String gender=super.access.getGender();
 				if(!gender.isEmpty()) {
 					attributesTemp.add(new Attribute(BCStyle.GENDER, new DERSet(new DEROctetString(gender.getBytes()))));
@@ -898,7 +1032,7 @@ public class MyCode extends CodeV3 {
 					SubjectDirectoryAttributes attributes=new SubjectDirectoryAttributes(attributesTemp);			
 					gen.addExtension(X509Extensions.SubjectDirectoryAttributes, isCriticalsubDirAtrUsage, attributes);
 				}
-				
+				//Load inhibit any policy extension
 				boolean inhibitAnyPolicyFlag=super.access.getInhibitAnyPolicy();
 				boolean isCriticalInhibitAnyPolicyFlag=super.access.isCritical(Constants.IAP);
 				if(inhibitAnyPolicyFlag) {
@@ -907,50 +1041,39 @@ public class MyCode extends CodeV3 {
 						ASN1Integer skipCertsInteger = new ASN1Integer(new BigInteger(skipCerts));
 						gen.addExtension(Extension.inhibitAnyPolicy, isCriticalInhibitAnyPolicyFlag, skipCertsInteger);
 					}
+					else {
+						super.access.reportError("Skip certs must be set in inhibit any policy extension");
+						return false;
+					}
 				}
-				
+				//Sign and generate certificate
 				java.security.cert.X509Certificate certificate=gen.generate((PrivateKey)localKeyStore.getKey(keypair_name, null), "BC");
-				
-				
-				
-
+				//Create certificate authority reply generator
 				CMSSignedDataGenerator gen1 = new CMSSignedDataGenerator();
+				//Create certificate chain
 				java.util.List<X509Certificate> certificates = new java.util.ArrayList<>();
-				
-				// I chose to add the CA certificate
 				certificates.add((X509Certificate) caCertificate);
-				
-				// In this case, this is a certificate that I need to add
 				certificates.add((X509Certificate) certificate);
-				
-				java.util.Collection<JcaX509CertificateHolder> x509CertificateHolder = new java.util.ArrayList<>();
-				
-				// Of course, we need to handle the exceptions...
+				//Put certificate chain to holders
+				java.util.Collection<JcaX509CertificateHolder> x509CertificateHolder = new java.util.ArrayList<>();			
 				for (X509Certificate certificateTemp : certificates) {
 					x509CertificateHolder.add(new JcaX509CertificateHolder(certificateTemp));
 				}
 				CollectionStore<JcaX509CertificateHolder> store = new CollectionStore<>(x509CertificateHolder);
-				
-				// The final stage.
-				 gen1.addCertificates(store);
-
-				 
+				//Add certificate chain to certificate authority reply generator
+				gen1.addCertificates(store);
+				//Reply encoded data
 				CMSTypedData content = new CMSProcessableByteArray(certificate.getEncoded());
-				 
-				CMSSignedData signedData = gen1.generate(content, true);
-				 
+				//Generate certificate authority reply and flush it to file
+				CMSSignedData signedData = gen1.generate(content, true);	 
 				File file=new File(filePath);
 				if (!file.exists()) {
 					file.createNewFile();
 				}		
-				
 				oStream=new FileOutputStream(filePath);
 				oStream.write(signedData.getEncoded());
-				oStream.flush();
-				
-				return true;
-				
-				
+				oStream.flush();			
+				return true;			
 			}
 		} catch (Exception e) {
 			e.printStackTrace();
@@ -966,5 +1089,4 @@ public class MyCode extends CodeV3 {
 		}
 		return false;
 	}
-
 }
