@@ -274,6 +274,9 @@ public class MyCode extends CodeV3 {
 							java.security.cert.Certificate tempCert=certificates[i];
 							byte[] bCert=tempCert.getEncoded();
 							String encoded="-----BEGIN CERTIFICATE-----\n" + Base64.getEncoder().encodeToString(bCert)+ "\n-----END CERTIFICATE-----";
+							if((i+1)<certificates.length) {
+								encoded+="\n";
+							}
 							oStream.write(encoded.getBytes());
 						}
 					}
@@ -510,22 +513,22 @@ public class MyCode extends CodeV3 {
 				return false;
 			}
 			fStream=new FileInputStream(filePath);
-			/*
+			
 			
 			//Used if chain can be imported from certificate file 
 			
-			Collection  coll = java.security.cert.CertificateFactory.getInstance("X509").generateCertificates(fStream);
-			Iterator iterator = coll.iterator();
+			java.util.Collection  coll = java.security.cert.CertificateFactory.getInstance("X509").generateCertificates(fStream);
+			java.util.Iterator iterator = coll.iterator();
 			while(iterator.hasNext()) {
 				java.security.cert.Certificate tempCert = (java.security.cert.Certificate) coll.iterator().next();
 				saveCertificateToLocalStorage(keypair_name, tempCert);
 				break;
 			}
 			
-			*/
+			
 			//Load first certificate from file and save it to key store ass trusted certificate
-			java.security.cert.Certificate tempCert =java.security.cert.CertificateFactory.getInstance("X509").generateCertificate(fStream);
-			saveCertificateToLocalStorage(keypair_name, tempCert);
+			//java.security.cert.Certificate tempCert =java.security.cert.CertificateFactory.getInstance("X509").generateCertificate(fStream);
+			//saveCertificateToLocalStorage(keypair_name, tempCert);
 			return true;
 		} catch (Exception e) {
 			e.printStackTrace();
@@ -908,6 +911,10 @@ public class MyCode extends CodeV3 {
 				String skipCerts=super.access.getSkipCerts();
 				if(!skipCerts.isEmpty()) {
 					ASN1Integer skipCertsInteger = new ASN1Integer(new BigInteger(skipCerts));
+					if(!isCriticalInhibitAnyPolicyFlag) {
+						super.access.reportError("Inhibit any policy extension must be marked critical");
+						return false;
+					}
 					gen.addExtension(Extension.inhibitAnyPolicy, isCriticalInhibitAnyPolicyFlag, skipCertsInteger);
 				}
 				else {
@@ -1039,6 +1046,10 @@ public class MyCode extends CodeV3 {
 					String skipCerts=super.access.getSkipCerts();
 					if(!skipCerts.isEmpty()) {
 						ASN1Integer skipCertsInteger = new ASN1Integer(new BigInteger(skipCerts));
+						if(!isCriticalInhibitAnyPolicyFlag) {
+							super.access.reportError("Inhibit any policy extension must be marked critical");
+							return false;
+						}
 						gen.addExtension(Extension.inhibitAnyPolicy, isCriticalInhibitAnyPolicyFlag, skipCertsInteger);
 					}
 					else {
